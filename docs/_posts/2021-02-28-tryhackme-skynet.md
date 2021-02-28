@@ -136,7 +136,7 @@ Walterminator
 
 Going back to the squirrel mail login page, I launched Burpsuite intruder with the list of potential passwords and the name milesdyson that I saw in SMB enumeration. 
 
-! /assets/img/20210228075545.png)
+![](/assets/img/20210228075545.png)
 
 ![](/assets/img/20210228075749.png)
 
